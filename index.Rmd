@@ -1,0 +1,1106 @@
+---
+title: "Atelier R ANF FOSS : La régression géographiquement Pondérée ou GWR"
+date: "`r Sys.Date()`"
+author: 
+ - name: Thierry Feuillet
+   affiliation: UMR IDEES, Université de Caen-Normandie
+ - name: Grégoire Le Campion
+   affiliation: UMR Passages, CNRS
+image: "figures/FOSS.png"
+output:
+  rzine::readrzine:
+    highlight: kate
+    number_sections: true
+csl: Rzine_citation.csl
+bibliography: biblio.bib
+nocite: |
+  @*
+link-citations: true
+# github: "author/repository"
+# gitlab: "gitlab.huma-num.fr/author/repository"
+# doi: "xx.xxx/xxxx.xxxxxxx"
+
+# Only Creative Commons Licence 
+# 5 possible choices : "by-nd", "by", "by-nc-sa", "by-nc","by-sa"
+---
+
+```{r setup, include=FALSE, eval=FALSE}
+
+## Global options
+knitr::opts_chunk$set(echo=TRUE,
+                      # eval = FALSE,
+        	            cache=FALSE,
+                      prompt=FALSE,
+                      comment=NA,
+                      message=FALSE,
+                      warning=FALSE,
+                      class.source="bg-info",
+                      class.output="bg-warning")
+
+library(rzine)
+
+```
+
+
+<div style="background-color: #dcdcdc ; border-color:navajowhite3; padding: 1em; font-size:115% ; color: CCCCCC">
+**Objectif de l'atelier** : Être en mesure de réaliser et interpréter une régression géographiquement pondérée (GWR).
+
+</div>
+<br>
+
+<div style="background-color: #dcdcdc ; border-color:navajowhite3; padding: 0.8em; font-size:115% ; color: CCCCCC">
+**Prérequis** : Connaissances de base en analyse de données statistiques, avec au moins une compréhension de ce qu'est une corrélation et une régression.
+</div>
+
+
+# Pourquoi la GWR ?
+
+Lorsque l'on souhaite dépasser la simple caractérisation d'attributs liés à des individus statistiques, on fait appel à des méthodes de modélisation explicitant des relations statistiques. La méthode la plus employée, principalement en sciences sociales, pour mesurer et analyser la nature des relations et des effets entre deux ou plusieurs variables, est le modèle de **régression linéaire**.
+
+Le principe de la régression linéaire est de modéliser la variable que nous souhaitons étudier (aussi appeler variable dépendante, VD) comme une fonction linéaire des variables que nous aurons définies comme explicatives de la VD (aussi appelées variables indépendantes, VI). Lorsque l'on s'intéresse à un phénomène social avec une emprise sur un espace, la régression linéaire pose plusieurs problèmes :
+
+Le premier est empirique. La régression linéaire nous permet d'obtenir des coefficients (appelés betas **β**) et des résidus (notés epsilon **ε**). Ces **β** représentent l'effet de nos VI sur notre VD. Ces **β** sont considérés comme globaux, sans variation. Autrement dit, les modèles de régression linéaires considèrent que les VI interviennent de la même manière et avec la même importance sur l'ensemble de notre jeu de données. Si cette hypothèse peut être validée sur des populations statistiques définies aléatoirement et sans effet de structure *a priori* des VI ou de la VD, elle n'est que rarement vérifiée sur des données spatiales. En effet, les caractéristiques propres de chaque territoire (l'unicité de chaque lieu) impliquent que l'effet constaté en un lieu n'est pas forcément valable en un autre lieu de l'espace.
+
+Concernant les prix des valeurs foncières que nous détaillerons par la suite dans cette fiche, on peut comprendre que la proximité au littoral, très prégnante en certains points de l'espace, ne joue absolument aucun rôle dans d'autres lieux. De même, certaines caractérisations du monde rural n'interviennent plus lorsqu'on se situe dans des milieux fortement urbanisés. Ainsi, les données spatialisées sont soumises à l'hétérogénéité spatiale : l'effet de nos VI va varier en fonction de l'espace. Un coefficient qui serait global et uniforme pour mesurer un effet paraît plus simple et donc tentant, mais non pertinent en géographie ; sur ce point nous pouvons nous référer à l'article de Brunsdon, Fotheringham et Charlton [@Brundson_1996]. **Ce concept d'hétérogénéité dans l'espace se traduit en statistique par celui de non stationnarité**.
+
+Le deuxième problème est statistique : chaque méthode statistique doit répondre à un certain nombre de conditions de validité. La régression linéaire ne fait pas exception. Trois conditions doivent être validées pour qu'une régression linéaire puisse être effectuée sans que l'interprétation des résultats conduisent à des raisonnements fallacieux :
+
+- Les individus statistiques doivent être indépendants
+- Les résidus doivent suivre une distribution normale
+- Il ne peut pas y avoir plus de VI que d'individus statistiques
+
+Si les deux dernières conditions ne trouvent pas de matérialisation spécifique sur des données spatiales, la première quant à elle concrétise un problème récurrent sur les données en géographie. Par leur nature même, les données spatiales ne peuvent pas remplir cette condition fondamentale pour une régression classique. La première loi de la géographie de Tobler : *"everything is related to everything else, but near things are more related than distant things"* en est une traduction tout à fait parlante. 
+
+Le troisième problème est lié aux effets de contexte : on ne peut pas étudier des données spatiales sans considérer que les individus statistiques (les objets spatiaux) appartiennent eux-mêmes à des agrégats qui ont une influence sur la variable à expliquer. Ainsi, certains attributs de l'agrégat vont avoir une influence sur l'entité spatiale de cet agrégat.
+
+Le quatrième problème est lié à la problématique du MAUP (Modifiable Area Unit Problem). Il concerne un problème d'échelle d'application de la régression et peut conduire à des observations erronées. Une corrélation constatée à une échelle peut être uniquement liée à l'agrégation réalisée à cette échelle, mais s'avérer erronée à une échelle plus fine, invalidant de fait la relation entre les phénomènes étudiés [@Mathian_2001]. Certaines agrégations peuvent également varier et cacher des relations entre individus [@Bailey_1995].
+
+La GWR ne répond pas à l'ensemble de ces problèmes mais va nous permettre de résoudre les deux premiers en intégrant la dimension spatiale de nos données tout en tenant compte de l'hétérogénéité (ou non stationnarité) de leur effet.
+
+## Les packages
+
+Voici les packages que nous utiliserons :
+
+```{r, message=FALSE}
+
+# Chargement, visualisation et manipulation de la données
+library(here)
+library(DT)
+library(dplyr)
+
+# Analyse et représentation statistique
+library(car)
+library(correlation)
+library(corrplot)
+library(ggplot2)
+library(gtsummary)
+library(GGally)
+library(plotly)
+
+# Manipulation et représentation de la données spatiales (cartographie)
+library(sf)
+library(mapsf)
+library(rgeoda) #permet en plus de calculer les indices d'auto-corrélation spatiale
+library(RColorBrewer)
+
+# Calcul du voisinage et réalisation de la GWR
+library(spdep)
+library(GWmodel)
+```
+
+## Présentation et préparation des données 
+
+Nous avons cherché à traiter ici une variable présentant des caractéristiques spatiales fortes et qui rencontrent les deux problèmes exposés précédemment d'indépendance statistique et de non-stationnarité. Les prix de l'immobilier en France sont effectivement soumis à ces problèmes et peuvent être expliqués, au moins partiellement, par des variables quantitatives issues de données de l'INSEE. Nous avons traité l'information liée au prix de l'immobilier à l'échelle de Etablissements Publics de Coopération Intercommunale (EPCI) pour nous assurer un nombre d'observation suffisant dans chaque entité spatiale.
+
+ - Les données du prix de l'immobilier par EPCI (prix médian au m²) sont issues des ventes observées sur l'année 2018, extraites depuis la [base de données des notaires de France](https://www.immobilier.notaires.fr/fr/prix-immobilier){target="_blank"} par Frédéric Audard et Alice Ferrari. Ce fichier a été simplifié pour ne conserver que les variables d'intérêts parmi une cinquantaine
+- Les données statistiques proviennent de l'INSEE (année 2019) : 9 variables ont été choisies pour leur potentialité à expliquer les variations des prix de l'immobilier, concernant [la population](https://www.insee.fr/fr/statistiques/6456153?sommaire=6456166), [le logement](https://www.insee.fr/fr/statistiques/6454155?sommaire=6454268) et [les revenus et niveaux de vie](https://www.insee.fr/fr/statistiques/6036907). Elles sont détaillées un peu plus bas.
+- Comme indiqué en introduction les données spatiales proviennent de la base [ADMIN-EXPRESS de l'IGN](https://geoservices.ign.fr/adminexpress) en accès libre. La couche est utilisée est celle des EPCI de la base ADMIN-EXPRESS-COG édition 2022 par territoire pour la France métropolitaine.
+
+Les données statistiques et du prix de l'immobilier ont été regroupées dans un même fichier CSV `donnees_standr.csv`.
+
+Les données spatiales (géométrie des EPCI) sont au format [shapefile](https://fr.wikipedia.org/wiki/Shapefile) dans le fichier `EPCI.shp`.
+
+### Chargement des données sur le prix de l'immobilier par EPCI
+
+```{r}
+# On situe le dossier dans lequel se trouve nos données
+csv_path <- here("data", "donnees_standr.csv")
+# lecture du CSV dans un dataframe
+immo_df <- read.csv2(csv_path)
+# Pour visualiser les 10 1ères lignes
+datatable(head(immo_df, 10))
+```
+
+Ce fichier est composé des 10 variables suivantes :
+
+- SIREN : code SIREN de l'EPCI
+- prix_med : prix médian par EPCI à la vente (au m²)
+- perc_log_vac : % logements vacants
+- perc_maison : % maisons
+- perc_tiny_log : % petits logements (surface < ?)
+- dens_pop : densité de population (nb habitants / km² ?)
+- med_niveau_vis : médiane du niveau de vie
+- part_log_suroccup : % logements suroccupés
+- part_agri_nb_emploi : % agriculteurs
+- part_cadre_profintellec_nbemploi : % cadres et professions intellectuelles
+
+La variable `SIREN` nous servira de "clé" pour joindre ces données statistiques aux données spatiales, la variable `prix_med` sera la variable que nous chercherons à expliquer (VD), et toutes les autres seront nos variables explicatives (VI).
+
+### Chargement des données géographiques : les EPCI de France métropolitaine
+
+Ces données proviennent de la base [ADMIN-EPXRESS-COG de l'IGN](https://geoservices.ign.fr/adminexpress){target="_blank"}, édition 2022. Le format d'entrée est le shapefile mais nous passerons par une conversion au format sf, ce qui nous permet d'utiliser le package [mapsf](https://riatelab.github.io/mapsf/){target="_blank"}, pour les prévisualiser :
+
+```{r collapse=TRUE}
+# lecture du shapefile en entrée dans un objet sf
+shp_path <- here("data", "EPCI.shp")
+epci_sf <- st_read(shp_path)
+# visualisation des données géographiques
+mf_map(x = epci_sf)
+# et la table attributaire correspondante
+datatable(head(epci_sf, 5))
+```
+
+
+### Jointure des données géographiques et tabulaires
+
+Les lignes vides ne nous intéressent pas, nous ne les conserverons pas car elles pourraient poser problème lors de la réalisation de nos analyses.
+On fait la jointure en ne gardant que les EPCI ayant une correspondance dans le tableau de données :
+
+```{r}
+data_immo <- merge(x = epci_sf, y = immo_df, by.x = "CODE_SIREN", by.y = "SIREN")
+nrow(data_immo)
+```
+
+<div class="alert alert-success" role="alert">
+Pourquoi certains EPCI n'ont-ils pas de correspondance dans notre tableau de données ? Il s'agit notamment des EPCI de la petite couronne de Paris, qui se superposent à l'EPCI de la métropole du grand Paris (les données sont donc bien présentes pour cette zone). Pour le reste, il s'agit de nouveaux EPCI ou bien d'EPCI ayant évolué et donc changé d'identifiant.
+</div>
+
+On peut maintenant représenter les données du prix médian de l'immobilier par EPCI sous forme de carte :
+
+```{r}
+mf_map(x = data_immo, 
+       var = "prix_med", 
+       type = "choro",
+       breaks = "quantile",
+       nbreaks = 7,
+       pal = "Mint",
+       lwd = 0.01,
+       leg_title = "Discrétisation par quantile",
+       leg_val_rnd = 0)
+mf_title("Prix médian de l'immobilier au m² par EPCI")
+mf_credits("Sources: Notaires de France, IGN Admin Express")
+```
+
+Et avoir un aperçu rapide des autres données issues de l'INSEE :
+
+```{r}
+par(mfrow = c(3,3))
+for (var in colnames(data_immo)[6:13]) {
+  mf_map(x = data_immo,
+         var = var,
+         type = "choro",
+         breaks = "quantile",
+         nbreaks = 7,
+         pal = "Purples",
+         lwd = 0.01,
+         leg_pos = NA)
+  mf_title(var)
+  mf_credits('Sources: INSEE, IGN Admin Express')
+}
+```
+
+ Dans le cas où vous préféreriez manipuler vos données sous un format sp (package sp), ou dans le cas où ce format serait requis pour utiliser certains packages ou certaines formules, vous pouvez convertir votre objet sf en sp à l'aide de la ligne de commande suivante (nous en aurons besoin pour la suite) :
+
+```{r}
+data_immo_sp <- as(data_immo, "Spatial")
+```
+
+<div class="alert alert-success" role="alert">
+Les packages [sf (Simple Features for R)](https://r-spatial.github.io/sf/) et [sp (Classes and methods for spatial data)](https://www.rdocumentation.org/packages/sp/versions/1.5-0) proposent tous deux des fonctions pour manipuler des données spatiales. Le package sf est plus récent et plus performant, mais beaucoup de packages R ne fonctionnent encore qu'avec le format sp.
+</div>
+
+
+
+
+# Régression géographiquement pondérée (GWR)
+
+<div class="alert alert-warning" role="alert">
+**Avant d'attaquer la GWR un petit appel des épisodes précédents ! **
+
+Notre objectif est donc d'expliquer le prix median de l'immobilier des EPCI en France métropolitaine, en fonction d'un certian nombre d'autre variables comme par exemple la densité de population, le pourcentage de petits logement...
+Alors que nous pensions pouvoir réaliser une régression classique nous nous sommes rendu compte que cela ne fonctionnait pas ! Le spatial comme à son habitude venait perturbé nos plans.
+
+Avant de poursuivre prenons le temps de visualiter la distribution de nos données le prix de l'immobilier et ses prédicteurs :
+
+
+```{r}
+# Distribution de la variable dépendante :
+add_histogram(plot_ly(data_immo, x = ~prix_med))
+```
+
+
+```{r warning=FALSE}
+# Distribution des variables indépendantes :
+a <- add_histogram(plot_ly(data_immo, x = ~log(perc_log_vac), name = "perc_log_vac"))
+b <- add_histogram(plot_ly(data_immo, x = ~log(perc_maison), name = "perc_maison"))
+c <- add_histogram(plot_ly(data_immo, x = ~log(perc_tiny_log), name = "perc_tiny_log"))
+d <- add_histogram(plot_ly(data_immo, x = ~log(dens_pop), name = "dens_pop"))
+e <- add_histogram(plot_ly(data_immo, x = ~log(med_niveau_vis), name = "med_niveau_vis"))
+f <- add_histogram(plot_ly(data_immo, x = ~log(part_log_suroccup), name = "part_log_suroccup"))
+g <- add_histogram(plot_ly(data_immo, x = ~log(part_agri_nb_emploi), name = "part_agri_nb_emploi"))
+h <- add_histogram(plot_ly(data_immo, x = ~log(part_cadre_profintellec_nbemploi), name = "part_cadre_profintellec_nbemploi"))
+fig = subplot(a, b, c, d, e, f, g, h, nrows = 2)
+fig
+```
+
+Voici à quoi ressemble notre modèle linéaire classique
+
+```{r}
+# Dans le fonctionnement sur R il est important de stocker la régression dans un objet.
+# Pour lancer la régression on va utiliser la fonction lm() dont les 2 lettres sont l'acronyme pour linear model
+mod.lm <- lm(formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi, 
+             data = data_immo)
+
+# On affiche les principaux résultats avec la fonction summary
+summary(mod.lm)
+```
+
+
+
+```{r}
+mod.lm %>%
+  tbl_regression(intercept = TRUE)
+```
+
+On peut également visualiser graphiquement les coefficients des variables explicatives avec le package `GGally` :
+
+```{r}
+GGally::ggcoef_model(mod.lm)
+```
+
+
+Une manière très efficace de vérifier l'importance de la dimension spatiale c'est de cartographier nos résidus. S'il semble émerger une structure c'est que très vraissemblablement le spatial va jouer et que les conditions liées aux résidus de la réalisation d'une régression classique ne sont pas vérifiées.
+
+De manière générale lorsque l'on travaille avec des données spatiales il est toujours bon de les cartographier.
+
+On intègre les résidus à la table attributaire de notre objet sf. A priori, comme on a utilisé nos données spatiales (sf) pour la régression les données sont classées dans le bon ordre.
+
+```{r}
+data_immo$res_reg <- mod.lm$residuals
+```
+
+
+```{r, include=FALSE}
+# fonction pour créer des limites de classes à partir de :
+# values : une liste de valeurs à discrétiser
+# interval : la taille de chaque classe
+# center : valeur centrale de la discrétisation
+# pos_center : la position de la valeur centrale, "class_center" ou "class_break"
+# (si class_center, une classe sera créée autour de cette valeur, de taille 2*interval)
+# min_nb : si besoin les classes extrêmes seront fusionnées jusqu'à obtenir une classe
+# avec un nb d'individus >= à min_nb
+discr <- function(values, center, pos_center, interval, min_nb) {
+  # calcul des limites de classes :
+  if (pos_center == "class_break") { # valeur centrale = lim de classe
+    breaks <- c(center)
+    centermax <- center
+    centermin <- center
+  } else { # valeur centrale = centre de classe
+    if (center < max(values)) {
+      # breaks <- c(center - interval/2, center + interval/2)
+      breaks <- c(center + interval/2)
+      centermax <- center + interval/2
+    }
+    if (center > min(values)) {
+      breaks <- append(breaks, center - interval/2)
+      centermin <- center - interval/2
+    }
+  }
+  # ...pour les limites > centre
+  if (center < max(values)) {
+    x <- 1
+    while (centermax + x * interval < max(values)) {
+      breaks <- append(breaks, centermax + x * interval)
+      x <- x + 1
+    }
+  }
+  # ...pour les limites < centre
+  if (center > min(values)) {
+    x <- 1
+    while (centermin - x * interval > min(values)) {
+      breaks = append(breaks, centermin - x * interval)
+      x <- x + 1
+    }
+  }
+  # ajout des min et max
+  breaks = append(breaks, min(values))
+  breaks = append(breaks, max(values))
+  # et tri
+  breaks = sort(breaks)
+  # calcul des effectifs pour chaque classe
+  nb_classes = length(breaks) - 1
+  sizes = c()
+  for (x in 1:nb_classes) {
+    min_cl <- breaks[x]
+    max_cl <- breaks[x+1]
+    current_size <- 0
+    for (value in values) {
+      if (value >= min_cl & value < max_cl) {
+        current_size <- current_size + 1
+      } 
+    }
+    sizes = append(sizes, current_size)
+  }
+  # suppression des classes ayant un effectif trop faible :
+  # ...en partant de la classe du bas
+  x <- 1
+  while (sizes[x] < min_nb) {
+    # fusionne les 2 1ères classes en supprimant la limite qui les sépare
+    breaks <- breaks[! breaks %in% c(breaks[x + 1])]
+    # recalcule la 2ème valeur des effectifs
+    sizes[2] = sizes[1] + sizes[2]
+    # et supprime la 1ère valeur d'effectifs
+    sizes = sizes[-1]
+  }
+  # ...en partant de la classe du haut
+  x <- length(breaks)
+  while (sizes[x - 1] < min_nb) {
+    # fusionne les 2 dernières classes en supprimant la limite qui les sépare
+    breaks <- breaks[! breaks %in% c(breaks[x-1])]
+    # recalcule l'avant dernière valeur des effectifs
+    sizes[length(sizes)-1] = sizes[length(sizes)] + sizes[length(sizes)-1]
+    # et supprime la dernière valeur d'effectifs
+    sizes = sizes[-length(sizes)]
+    # réaffecte x
+    x <- length(breaks)
+  }
+  # récupère le nb de classes d'un côté et de l'autre du centre
+  if (pos_center == "class_break") {
+    nb_cl_sup0 <- length(breaks[breaks > center])
+    nb_cl_inf0 <- length(breaks[breaks < center])
+  } else {
+    if (center < max(values)) {
+      nb_cl_sup0 <- length(breaks[breaks > center]) - 1
+    } else {
+      nb_cl_sup0 <- 0
+    }
+    if (center > min(values)) {
+      nb_cl_inf0 <- length(breaks[breaks < center]) - 1
+    } else {
+      nb_cl_inf0 <- 0
+    }
+  }
+  resultats <- list(breaks, nb_cl_sup0, nb_cl_inf0)
+  return (resultats)
+}
+```
+
+
+
+```{r, echo=FALSE}
+res_residus <- discr(data_immo$res_reg, 0, "class_center", sd(data_immo$res_reg)*0.5, 10)
+breaks_residus <- res_residus[[1]]
+nb_cl_sup0_res <- res_residus[[2]]
+nb_cl_inf0_res <- res_residus[[3]]
+```
+
+On peut maintenant faire la carte des résidus :
+
+```{r collapse=TRUE}
+# on fonce légèrement la couleur de fond pour mieux voir la classe centrale
+mf_theme("default", bg = "#dedede")
+# création d'une palette divergente avec une couleur neutre centrale
+palette = mf_get_pal(n = c(nb_cl_inf0_res, nb_cl_sup0_res), pal = c("Teal", "Peach"), neutral = "#f5f5f5")
+# la carte :
+mf_map(x = data_immo, 
+       var = "res_reg", 
+       type = "choro", 
+       border = NA,
+       lwd = 0.1,
+       breaks = breaks_residus,
+       pal = palette,
+       leg_title = "Valeur centrale =  0\nIntervalle = σ / 2", 
+       leg_val_rnd = 1)
+mf_title("Résidus de régression linéaire classique")
+mf_credits("Sources: Notaires de France, INSEE, IGN Admin Express")
+# réinitialisation du thème
+mf_theme("default")
+```
+
+Sur cette carte on voit très clairement une spatialisation des résidus, sans même faire les tests nous aurions pu voir que la dimension spatiale jouait bien un rôle. Sans autocorrelation nous aurions eu une répartition aléatoire des résidus.
+</div>
+
+Comme nous l'avons vu, les données, lorsqu'elles sont spatialisées, sont souvent soumises aux phénomènes de dépendance et d'hétérogénéité spatiale.
+
+Pour prendre en compte le phénomène de dépendance spatiale, on fait souvent appel aux régressions spatiales. Elles permettent à la fois de mieux comprendre la relation qui unit les variables explicatives à la variable étudiée d'une part ; et d'autre part de traiter la relation de notre VD à son propre voisinage. Les régressions spatiales peuvent donc (en fonction du type de régression choisie) intégrer les caractéristiques du voisinage (de la VD ou des VI) pour expliquer la VD. 
+Il existe différents modèles de régression spatiale, toute la question est de savoir quel modèle utiliser ? Ce choix va dépendre de la nature des phénomènes spatiaux étudiés. Nous ne traiterons pas ici de ce sujet.
+
+Par ailleurs, l'hétérogénéité, qui renvoie à une instabilité, induit une variabilité spatiale de nos paramètres. L'idée est que nos VI peuvent avoir un effet qui n'est pas le même partout dans l'espace. Dans ce cas nous optons pour la **régression géographiquement pondérée (GWR)**.
+
+<div class="alert alert-danger" role="alert">
+Ainsi, si on s'intéresse au lien entre les voisins on est dans l'autocorrélation spatiale et les modèle SEM, SAR & cie mais si on s'intéresse à l'hétérogénéité de nos variables c'est-à-dire à leur variabilité selon leur localisation on est dans la GWR.
+</div>
+
+<div class="alert alert-success" role="alert">
+Attention, ce qui en théorie peut paraître assez tranché ne l'est souvent pas du tout en pratique. En effet, il y a bien des cas où l'on a du mal à savoir dans quel cadre on se situe exactement.
+</div>
+
+Pour réaliser une GWR sur R plusieurs packages reconnus existent. On peut citer notamment le [`package spgwr`](http://rspatial.r-forge.r-project.org/spgwr/index.html) et le [`package GWmodel`](https://www.rdocumentation.org/packages/GWmodel/versions/2.2-9). Nous choisirons d'utiliser ici le `package GWmodel`.
+
+
+## Calcul de la matrice des distance
+
+La première étape est de calculer la distance entre toutes nos observations. Pour ce faire nous utiliserons la fonction `gw.dist()`.
+
+
+```{r}
+# Le package GWmodel n'est pas compatible avec le format sf il a besoin d'un objet sp
+# (contrairement à spgwr qui peut travailler avec un format sf)
+
+# Pour construire la matrice de distances entre centroïdes des EPCI :
+dm.calib <- gw.dist(dp.locat = coordinates(data_immo_sp))
+```
+
+
+## Définition de la bande passante
+
+**La bande passante est une distance au-delà de laquelle le poids des observations est considéré comme nul.** Le calcul de cette distance est très important car la valeur de la bande passante pourra fortement influencer notre modèle. La définition de la bande passante renvoie à quel type de pondération nous souhaitons appliquer. Heureusement la fonction `bw.gwr` va choisir pour nous le résultat optimal...
+
+Pour ce faire la fonction va se baser sur un critère statistique que l'utilisateur devra définir : le CV (validation croisée) ou le AIC (Critère d'information d'Akaike). Elle reposera aussi sur un type de noyau qu'il faudra également définir : Gaussien, Exponentiel, Bicarré, Tricube ou encore Boxcar. Enfin, il sera également nécessaire de savoir si ce noyau pourra être adaptatif ou fixe.
+
+Voici quelques informations pour guider nos choix :
+
+- Le critère **CV** a pour objectif de maximiser le pouvoir prédictif du modèle, le critère **AIC** va chercher un compromis entre le pouvoir prédictif du modèle et son degré de complexité. En général, le critère AIC est privilégié.
+- Avec un **noyau fixe** l'étendue du noyau est déterminée par la distance au point d'intérêt et il est identique en tout point de l'espace. Un noyau fixe est adapté si la répartition des données est homogène dans l'espace, l'unité de la bande passante sera donc une distance. Avec un **noyau adaptatif** l'étendue du noyau est déterminée par le nombre de voisins. Il est donc plus adapté à une répartition non homogène, l'unité sera alors le nombre de voisins.
+
+Concernant la forme des noyaux :
+
+- Les **noyaux gaussiens et exponentiels** vont pondérer toutes les observations avec un poids qui tend vers zéro avec la distance au point estimé.
+- Les **noyaux bisquare et tricube** (dont les formes sont très proches) accordent également aux observations un poids décroissant avec la distance, mais par contre ce poids est nul au delà de la distance définie par la bande passante.
+- Le **noyau Box-Car** traite un phénomène continu de façon discontinue.
+
+```{r, echo=FALSE, fig.cap="Manuel de géographie quantitative [@feuillet_2019]", out.width = '80%', fig.align = 'center'}
+knitr::include_graphics(here("figures", "formatnoyau.png"))
+```
+
+Sachant que sur la forme du noyau, il est tout à fait possible de comparer deux pondérations et deux modèles de GWR.
+
+Ici, nous allons tester avec un noyau gaussien, ce qui sera justifié [un petit peu plus bas](#estimation-du-modèle).
+
+```{r}
+# Définition de la bande passante (bandwidth en anglais) :
+bw_g <- bw.gwr(data = data_immo_sp, 
+              approach = "AICc", 
+              kernel = "gaussian", 
+              adaptive = TRUE, 
+              dMat = dm.calib,
+              formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi)
+
+bw_g
+```
+
+Notre bande passante est donc ici de 19 voisins, ce qui implique que les EPCI au-delà de cette "distance" auront un poids ramené à 0 et ne joueront donc plus de rôle dans la description de la relation statistique.
+
+## Estimation du modèle
+
+Une fois la bande passante définie on peut lancer l'estimation de notre modèle de GWR :
+
+```{r}
+mod.gwr_g <- gwr.robust(data = data_immo_sp, 
+                   dMat = dm.calib,
+                   bw = bw_g,
+                   kernel = "gaussian",
+                   filtered = FALSE, # un des problèmes de la GWR est de gérer des individus "aberrants" au niveau local. 2 méthodes ont été définies pour gérer cela. 
+                                    # Méthode 1 (argument TRUE) on filtre en fonction des individus standardisés. L'objectif est de détecter les individus dont les résidus sont très élevés et de les exclure.
+                                    # Méthode 2 (argument FALSE) on diminue le poids des observations aux résidus élevés.
+                   adaptive = TRUE,
+                   formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi)
+
+```
+
+
+Si on souhaite comparer deux modèles car nous avons un doute sur les paramètres c'est tout à fait possible. Par exemple ici nous souhaitons comparer deux formes de noyau :
+
+```{r}
+bw_tri <- bw.gwr(data = data_immo_sp, 
+              approach = "AICc", 
+              kernel = "tricube", 
+              adaptive = TRUE, 
+              dMat = dm.calib,
+              formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi)
+
+mod.gwr_tri <- gwr.robust(data = data_immo_sp, 
+                   dMat = dm.calib,
+                   bw = bw_tri,
+                   kernel = "gaussian",
+                   filtered = FALSE,
+                   adaptive = TRUE,
+                   formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi)
+
+Best_gwr <- cbind(
+  rbind(bw_g, bw_tri),
+  rbind(mod.gwr_g$GW.diagnostic$gw.R2,mod.gwr_tri$GW.diagnostic$gw.R2),
+  rbind(mod.gwr_g$GW.diagnostic$AIC,mod.gwr_tri$GW.diagnostic$AIC)) %>% 
+  `colnames<-`(c("Nb Voisins","R2","AIC")) %>% 
+  `rownames<-`(c("GAUSSIAN","TRICUBE"))
+
+Best_gwr
+```
+
+Le modèle avec une forme qui a été définie au format gaussien explique un meilleur $R^2$ et le score d'$AIC$ est plus faible. Ce modèle est donc plus performant et dans notre situation c'est plutôt ce modèle qu'il faut privilégier.
+
+
+## Interprétation des premiers résultats
+
+Comme pour le modèle linéaire classique, l'objet qui contient notre GWR est composé de plusieurs éléments. Pour obtenir nos résultats il suffit d'appeler l'objet.
+
+```{r}
+# Pour voir les différent élément qui compose notre modèle de GWR
+summary(mod.gwr_g)
+
+# Pour accéder aux résultat
+mod.gwr_g
+```
+
+Cette visualisation des résultats nous propose d'abord un rappel complet du modèle linéaire classique. Puis viennent ensuite les informations concernant notre GWR. Le premier indicateur à analyser est le $R^2 ajusté$ ajusté de la GWR, qui est nettement meilleur que celui de la régression linéaire multiple. On passe de $77\%$ de variance expliqué à $91\%$ avec la GWR. Ce $R^2$, pour la GWR, est en fait une moyenne calculée des $R^2$ de toutes les régressions locales réalisées par la GWR.
+
+La seconde information qui nous intéresse particulièrement est les coefficient associés à nos VI. Nous voyons qu'ils ne sont pas présentés de la même manière que ceux de la régression linéaire. En effet, chaque VI va avoir des coefficients en fonction du minimum, maximum et des quartiles. Cela permet de rendre compte de la stationnarité de l'effet ou non. Dans notre cas on voit qu'il y a bien une variation et même dans certains cas une inversion des signes. Cela laisse supposer une non stationnarité des effets : un effet local peut être présent qui ne suivrait pas l'effet global.
+
+Par exemple, pour le pourcentage de logement vacant avec un coefficient global (modèle linéaire) de $-287$, quand ce pourcentage augmente le prix médian baisse. En simplifiant le pourcentage baisse d'une unité le prix médian augmente de $287€$. Dans le cas de la densité de population on a un coefficient global positif donc une relation positive. La densité augmente donc le prix médian augmente. Ici, au global la densité augmente d'une unité le prix médian augmente de $173€$.
+
+Les résultats de la GWR peuvent donc être lus à une échelle globale pour mesurer la pertinence du modèle ; mais également à des échelles locales : les résultats illustrent ainsi comment les coefficients varient en fonction des unités spatiales. Gardons l'exemple de la densité de population. Dans les lieux où le prix médian est à son minimum le coefficient est de $-411$ ; on a donc une relation négative. Dans ces espaces la densité augmente d'une unité le prix médian baisse de $411€$.
+
+Ensuite nous pouvons constater une inversion du signe du coefficient. Ainsi dans les EPCI du dernier quartile où le prix médian du logement est le plus élevé (par ex. Paris) le coefficient est positif. À son maximum une augmentation d'une unité entraîne une augmentation du prix de $659€$. On a donc très clairement un effet de la densité qui ne sera pas du tout le même en fonction du lieu.
+
+Nous pouvons également étudier l'intervalle interquartile. Ainsi, toujours pour la densité, ce résultat implique que pour 50% de nos unités spatiales (EPCI entre quartile 1 et 3), une augmentation d'une unité de la densité va impliquer une augmentation du prix médian entre $72€$ et $268€$.
+
+<div class="alert alert-danger" role="alert">
+Au travers de ces résultats on voit parfaitement comment une même variable peut avoir un effet différent, voire opposé en fonction des unités de lieu.
+</div>
+
+La cartographie va être la meilleure manière de représenter les betas (coefficients) et les différents indicateurs fournis avec la GWR, cela nous permet de décrire plus finement et plus précisément les phénomènes observés.
+
+L'ensemble des données est stocké dans le sous objet SDF de notre modèle. Il contient l'ensemble des informations du modèle associé à chaque donnée spatiale.
+
+On peut le convertir en un dataframe pour le visualiser plus facilement. À l'origine il est au format "SpatialPointsDataFrame".
+
+```{r}
+# Pour visualiser ce fichier dans R
+#View(mod.gwr_g$SDF@data)
+
+#Pour voir à quoi il ressemble dans ce document
+datatable(mod.gwr_g$SDF@data)
+
+# Pour voir les variables qui le constituent
+names(mod.gwr_g$SDF@data)
+
+# Intercept : c'est la constante c'est à dire prix médian de référence
+# nom de la variable : estimation du coefficient, du beta associé à la VI en chaque point.
+# y : les valeurs de la VD
+# yhat : valeur de y prédite.
+# residual, Stud_residual : résidu et résidu standardisé
+# CV_score : score de validation croisée
+# _SE : erreur standard de l'estimation du coefficient
+# _TV : t-value de l'estimation du coefficient
+# E_weight : poids des observations dans la régression robuste
+# Local_R2 : R2 au niveau de chaque unité spatiale
+
+```
+
+
+### Étude des résidus
+
+Commençons par une étude des résidus afin de vérifier que cette fois ils n'ont pas de structure apparente.
+
+```{r}
+# on récupère les résidus dans data_immo
+res_gwr <- mod.gwr_g$SDF$Stud_residual
+data_immo$res_gwr <- res_gwr
+# calcul des limites de classes avec la fonction discr, centrées sur 0
+res_resgwr <- discr(data_immo$res_gwr, 0, "class_center", sd(data_immo$res_gwr)*0.5, 10)
+breaks_gwr <- res_resgwr[[1]]
+nb_cl_sup0_gwr <- res_resgwr[[2]]
+nb_cl_inf0_gwr <- res_resgwr[[3]]
+# création de la palette correspondante
+palette = mf_get_pal(n = c(nb_cl_inf0_gwr, nb_cl_sup0_gwr), pal = c("Teal", "Peach"), neutral = "#f5f5f5")
+# la carte des résidus
+mf_map(x = data_immo, 
+       var = "res_gwr", 
+       type = "choro", 
+       border = "gray", 
+       lwd = 0.2, 
+       breaks = breaks_gwr,
+       pal = palette, 
+       leg_title = "Discrétisation standardisée :\nvaleur centrale = 0\nintervalle = σ / 2", 
+       leg_val_rnd = 1)
+mf_title("Résidus GWR")
+mf_credits("Sources: Notaires de France, INSEE, IGN Admin Express")
+```
+
+Cette carte ne présente pas de structure spatiale marquée et nous amène à penser que nous avons expliqué l'ensemble des phénomènes spatiaux liés aux questions de prix de l'immobilier.
+
+### Étude des coefficients
+
+Pour visualiser la non stationnarité des effets de nos VI la solution la plus efficace est la carte.
+
+```{r}
+# On ajoute à data_immo les coefficients
+data_immo$agri.coef <- mod.gwr_g$SDF$part_agri_nb_emploi
+data_immo$perc_maison.coef <- mod.gwr_g$SDF$perc_maison
+data_immo$dens_pop.coef <- mod.gwr_g$SDF$dens_pop
+data_immo$med_vie.coef <- mod.gwr_g$SDF$med_niveau_vis
+data_immo$logvac.coef <- mod.gwr_g$SDF$perc_log_vac
+data_immo$tinylog.coef <- mod.gwr_g$SDF$perc_tiny_log
+data_immo$suroccup.coef <- mod.gwr_g$SDF$part_log_suroccup
+data_immo$cadre.coef <- mod.gwr_g$SDF$part_cadre_profintellec_nbemploi
+```
+
+Pour réaliser les cartes, avec une discrétisation standardisée centrée sur 0 :
+
+```{r fig.height = 10}
+par(mfrow = c(4, 2)) 
+for (var in colnames(data_immo)[17:24]) {
+  # calcul des limites de classe
+  res <- discr(data.frame(data_immo)[, var], 0, "class_center", sd(data.frame(data_immo)[, var])*0.5, 10)
+  breaks <- res[[1]]
+  # palette de couleurs
+  nb_cl_sup0 <- res[[2]]
+  nb_cl_inf0 <- res[[3]]
+  if (nb_cl_inf0 > 0) {
+    palette = mf_get_pal(n = c(nb_cl_inf0, nb_cl_sup0), pal = c("Teal", "Peach"), neutral = "#f5f5f5")
+  } else { # cas de la médiane du niveau de vie où la valeur min est supérieure à 0
+    palette = mf_get_pal(n = c(nb_cl_sup0), pal = c("Peach"))
+  }
+  # la carte
+  mf_map(x = data_immo,
+         var = var,
+         type = "choro",
+         border = "gray",
+         lwd = 0.1,
+         breaks = breaks,
+         pal = palette,
+         leg_pos = "left",
+         leg_title = NA,
+         leg_val_rnd = 0)
+  mf_title(var)
+}
+```
+
+Les cartes des betas vont illustrer la variation des effets en fonctions des entités spatiales et de leur voisinage. **Dans notre cas on verra quels sont les EPCI où l'effet du coefficient est négatif et ceux où il est positif**, c'est-à-dire dans quel EPCI notre VI va entraîner une augmentation du prix médian et dans quel autre au contraire une diminution, toutes choses égales par ailleurs. Sachant que dans notre cas toutes les VI sont significatives, elles ont donc toutes un effet qui varie localement.
+
+Au-delà de cette visualisation VI par VI, il peut être intéressant de savoir par EPCI quelle variable sera la plus explicative dans la relation à notre VD, laquelle a l'impact le plus important. Nous avons donc réalisé une carte des contributions max par EPCI. Pour la réaliser nous nous sommes basés sur le T-value.
+
+```{r}
+data_immo$agri.t <- mod.gwr_g$SDF$part_agri_nb_emploi_TV
+data_immo$maison.t <- mod.gwr_g$SDF$perc_maison_TV
+data_immo$dens.t <- mod.gwr_g$SDF$dens_pop_TV
+data_immo$medvie.t <- mod.gwr_g$SDF$med_niveau_vis_TV
+data_immo$logvac.t <- mod.gwr_g$SDF$perc_log_vac_TV
+data_immo$tinylog.t <- mod.gwr_g$SDF$perc_tiny_log_TV
+data_immo$suroccup.t <- mod.gwr_g$SDF$part_log_suroccup_TV
+data_immo$cadre.t <- mod.gwr_g$SDF$part_cadre_profintellec_nbemploi_TV     
+
+# Définir contrib max
+df <- as.data.frame(data_immo)
+# On passe les t-values en valeurs absolues pour voir la plus grande contribution dans un sens sens ou dans l'autre
+data_immo$contribmax<- colnames(df[, c(25:32)])[max.col(abs(df[, c(25:32)]),ties.method="first")]
+```
+
+```{r}
+par(mfrow = c(1, 1))
+# Carte
+mf_map(x = data_immo, 
+       var = "contribmax", 
+       type = "typo", 
+       pal = brewer.pal(6,'Set2'),
+       border = "white",
+       lwd = 0.2)
+mf_title("Carte des variables contribuant le plus par epci")
+```
+
+Au-delà de la non-stationnarité de nos VI, cette carte met en évidence un autre phénomène : Dans un modèle linéaire classique, la sélection des VI se fait de manière itérative (ascendante, descendante, ou mixte). L'inclusion d'une VI a pour conséquence d'en exclure d'autres qui présenteraient trop de multi-colinéarité. **Le phénomène mis en évidence ici repose sur le fait qu'en fonction du lieu, la hiérarchie des VI, et donc leur pertinence au sein du modèle, n'est pas constante.** Cette visualisation des données ouvre donc une perspective intéressante pour la suite. Il serait tout à fait pertinent de développer une méthode permettant d'effectuer un stepwise préalable à toute GWR valable pour chaque lieu individuellement. Un tel modèle traiterait dans sa totalité le problème de non-stationnarité.
+
+Nous pouvons également cartographier les $R^2$ locaux, ce qui fournit une indication sur les zones où la variabilité est la mieux expliquée.
+
+```{r}
+data_immo$r2local=mod.gwr_g$SDF$Local_R2
+
+mf_map(x = data_immo, 
+       var = "r2local", 
+       type = "choro",
+       breaks = "quantile",
+       nbreaks = 11,
+       pal= "Reds",
+       border = "gray",
+       lwd = 0.2,
+       leg_title = "Discrétisation par quantile")
+mf_title("R² locaux")
+```
+
+<div class="alert alert-success">
+Nous avons choisi d'utiliser une palette de valeurs large pour représenter au mieux les différences de $R^2$ locaux. Toutefois, cette carte peut paraître trompeuse ; tous les EPCI obtiennent une explication satisfaisante avec un R² local minimum de 0.68.
+</div>
+
+À partir des t-value on peut aussi étudier la significativité des effets sur le territoire. **On peut ainsi calculer et cartographier un indicateur qui représenterait le nombre de VI dont l'effet est significatif sur chaque unité spatiale.** Cela donne une bonne idée de la complexité du phénomène sur un espace donné (en effet sur un EPCI on peut avoir toutes les variables significatives, elle jouent donc sur cet espace toutes un rôles) et souligne l'importance d'avoir une carte par coefficient. Cette carte montre également qu'un modèle parfaitement adaptatif gagnerait en sobriété et donnerait un AIC plus satisfaisant en ne sélectionnant localement que les variables réellement significatives dans la relation.
+
+```{r}
+# Pour rappel si on a plus de 200 individus et le t-value > |1.96| on pourra considérer le coefficient comme significatif au seuil de 0.05 (95% chances que ce ne soit pas dû au hasard)
+
+data_immo$nbsignif_t <- rowSums(abs(df[, c(25:32)]) > 1.96)
+
+mf_map(x = data_immo, 
+       var = "nbsignif_t", 
+       type = "typo",
+       pal = "Reds",
+       border = "gray",
+       lwd = 0.2)
+mf_title("Nombre de Betas significatifs par EPCI (t-value)")
+```
+
+Il se peut que cela soit plus intéressant d'utiliser les p-value, notamment si vous avez moins de 200 individus.
+
+
+```{r}
+# Les p-value ne sont pas fournis dans le modèle de la GWR, on pourrait les calculer à partir de t-value et de l'erreur standard mais le package GWmodel propose une fonction pour les obtenir
+pvalue <- gwr.t.adjust(mod.gwr_g)
+
+# On ajoute les p-value à notre fichier
+data_immo$agri.p <- pvalue$SDF$part_agri_nb_emploi_p 
+data_immo$maison.p <- pvalue$SDF$perc_maison_p
+data_immo$dens.p <- pvalue$SDF$dens_pop_p
+data_immo$medvie.p <- pvalue$SDF$med_niveau_vis_p
+data_immo$logvac.p <- pvalue$SDF$perc_log_vac_p
+data_immo$tinylog.p <- pvalue$SDF$perc_tiny_log_p
+data_immo$suroccup.p <- pvalue$SDF$part_log_suroccup_p
+data_immo$cadre.p <- pvalue$SDF$part_cadre_profintellec_nbemploi_p
+
+df<- as.data.frame(data_immo)
+data_immo$nbsignif_p <- rowSums(df[, c(36:43)] < 0.05)
+
+mf_map(x = data_immo, 
+       var = "nbsignif_p", 
+       type = "typo",
+       pal= "Reds",
+       border = "gray",
+       lwd = 0.2,)
+mf_title("Nombre des Betas significatifs par EPCI (p-value)")
+```
+
+<div class="alert alert-success">
+Sur ces deux dernières cartes (nombre de betas significatifs par EPCI avec les t-value et p-value) nous avons pris volontairement une liberté avec les règles de sémiologie graphique de Bertin. En effet, s'agissant de valeurs discrètes, nous aurions dû les représenter sous forme de symboles proportionnels. Cependant, dans la mesure où les EPCI ont une taille relativement homogène et par souci de visibilité, et aussi parce qu'il s'agit plus d'une carte exploratoire que d'un véritable rendu, nous avons opté pour une carte choroplèthe. Que les mânes de Bertin nous pardonnent !
+</div>
+
+Dans ce cadre, il est possible de réaliser une collection de cartes des p-value (ou t-value) comme ce qui a été fait pour les coefficients. **L'intérêt est de voir où l'effet de la VI est significatif et où il ne l'est pas.**
+
+```{r}
+# Ici nous représenterons les p-value avec un découpage par classe de significativité et seulement les p-value de 2 VI
+
+par(mfrow = c(1, 2))
+
+# Par exemple les p-value des coefficients de la variable part de l'emploi agriculteur
+data_immo<- data_immo %>%  mutate(agri.p_fac = case_when(agri.p<= 0.002 ~ "[0;0.002[",
+                           agri.p <= 0.01 ~ "[0.002;0.01[",
+                           agri.p <= 0.05 ~ "[0.01;0.05[",
+                           agri.p <= 0.1 ~ "[0.05;0.1[",
+                           TRUE ~ "[0.1;1]")) %>%
+  mutate(agri.p_fac = factor(agri.p_fac,
+                        levels = c("[0;0.002[", "[0.002;0.01[",
+                                   "[0.01;0.05[",
+                                  "[0.05;0.1[", "[0.1;1]")))
+
+
+mypal2 <- mf_get_pal(n = 5, palette = "OrRd")
+
+mf_map(x = data_immo, 
+       var = "agri.p_fac", 
+       type = "typo", 
+       border = "grey3", 
+       lwd = 0.1, 
+       pal = mypal2, 
+       leg_title = "Classe P-value")
+mf_title("P-value du coefficient de la part d'emploi agriculteurs")
+
+# Pour la densité de population
+data_immo<- data_immo %>%  mutate(dens.p_fac = case_when(dens.p <= 0.002 ~ "[0;0.002[",
+                           dens.p <= 0.01 ~ "[0.002;0.01[",
+                           dens.p <= 0.05 ~ "[0.01;0.05[",
+                           dens.p <= 0.1 ~ "[0.05;0.1[",
+                           TRUE ~ "[0.1;1]")) %>%
+  mutate(dens.p_fac = factor(dens.p_fac,
+                        levels = c("[0;0.002[", "[0.002;0.01[",
+                                   "[0.01;0.05[",
+                                  "[0.05;0.1[", "[0.1;1]")))
+
+mypal2 <- mf_get_pal(n = 5, palette = "OrRd")
+
+mf_map(x = data_immo, 
+       var = "dens.p_fac", 
+       type = "typo", 
+       border = "grey3", 
+       lwd = 0.1, 
+       pal=mypal2, 
+       leg_title = "Classe P-value")
+mf_title("P-value du coefficient de la densité de population")
+```
+
+Ces cartes des p-value sont particulièrement importantes car elles nous donnent les endroits où l'effet est significatif. En effet, on sait que la VI a effet global qui est significatif, qu'elle a en plus une variabilité locale or localement elle n'est pas partout significative. Pour la part d'agriculteur dans l'emploi, l'effet est significatif quasiment uniquement dans le Sud-Est.
+
+# Pour aller plus loin...
+
+<div class="alert alert-danger" role="alert">
+Cette partie et le code qui va avec est directement tiré du [cours donnée à SIGR par Thierry Feuillet](https://sigr2021.github.io/gwr/) [@feuillet].
+</div>
+
+
+## GWR Multiscalaire
+
+Selon Thierry Feuillet concernant la GWR multiscalaire : 
+
+> *"Il n’y a pas de raison de penser que tous les prédicteurs agissent sur le prix à la même échelle (c’est-à-dire selon un même schéma de voisinage). Certains processus peuvent être locaux, d’autres globaux. Récemment, une extension de la GWR a été proposée, permettant de relâcher cette hypothèse d’égalité des échelles : la GWR multiscalaire ([MGWR, Fotheringham et al., 2017](https://www.researchgate.net/publication/344632080_Multiscale_Geographically_Weighted_Regression_Computation_Inference_and_Application)). Le principe est simple : un algorithme optimise le choix de la bandwidth pour chaque prédicteur, en fonction des autres. Il en résulte un modèle souvent mixte."*
+
+Avec notre modèle même simplifié avec 3 prédicteurs le modèle est très long à tourner à l'échelle de la France entière, plus de 2h !
+
+On part donc ici sur un corpus plus petit : La Bretagne sans toucher à nos VI et au nombre d'itérations</div>
+
+La GWR multiscalaire est une méthode itérative, la faire tourner peut donc être TRES long. Plusieurs possibilités : diminuer le nombre maximum d'itérations, simplifier le modèle et intégrer moins de VI ou sinon réduire l'emprise spatiale. 
+
+Afin de réduire les temps de traitement, on filtre d'abord les données pour ne garder que les EPCI bretons. Un EPCI pouvant être à cheval sur 2 régions, on ne va garder ici que les EPCI dont le centroïde est en région Bretagne.
+On va pour ça se servir de la couche REGION.shp de la base ADMIN-EXPRESS de l'IGN.
+
+
+```{r}
+# Lecture de la couche région dans un objet sf
+shp_path <- here("data", "REGION.shp")
+region_sf <- st_read(shp_path)
+# Pour ne garder que la Bretagne
+bzh_sf <- region_sf[region_sf$NOM == "Bretagne",]
+mf_map(x = bzh_sf)
+# Création des centroïdes des EPCI
+epci_centroids <- st_centroid(epci_sf)
+# Sélection des centroïdes dans la région Bretagne
+epci_centroids_bzh <- st_intersection(epci_centroids, bzh_sf)
+mf_map(x = epci_centroids_bzh)
+# On ne garde que les EPCI correspondant à ces centroïdes
+epci_bzh <- merge(x = epci_sf, y = st_drop_geometry(epci_centroids_bzh), by.x = "CODE_SIREN", by.y = "CODE_SIREN")
+mf_map(x = epci_bzh)
+# Il faut refaire la jointure entre les données sur les EPCI et l'objet sf
+data_immo_bzh <- merge(x = epci_bzh, y = immo_df, by.x = "CODE_SIREN", by.y = "SIREN")
+# conversion objet sf vers objet sp pour le package GWmodel
+data_immo_bzh_sp <-as(data_immo_bzh, "Spatial")
+```
+
+On peut maintenant lancer la GWR multiscalaire :
+```{r}
+#source("gwr.multiscale_T.r")
+# On lance la MGWR
+# On note qu'il n'est pas ici nécessaire de définir une bande passante. Le principe de la GWR multiscalaire est justement d'adapter à chaque relation locale une bande passante (d'où les itérations)
+MGWR <- gwr.multiscale(formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi, 
+                       data = data_immo_bzh_sp, 
+                       kernel = "gaussian", 
+                       predictor.centered = rep(T, 3), # centrage des prédicteurs
+                       adaptive = TRUE,
+                       bws0 = rep(1,4)) # BW minimum pour l'optimisation
+
+mgwr.bw  <- round(MGWR[[2]]$bws,1) # Nombre de voisins pour chaque prédicteur
+#mgwr.bw
+
+# Exploration des résultats statistiques
+print(MGWR)
+```
+
+Il me semble que le nombre de plus proches voisins (number of nearest neighbours) nous indique si l'effet de notre prédicteurs relève d'un processus qui soit plus global (càd échelle du territoire) ou au contraire beaucoup plus localisé. Plus le nombre de voisins est petit plus l'effet est localisé.
+
+Pour visualiser les Betas :
+
+```{r}
+datatable(as.data.frame(MGWR$SDF))
+```
+
+A partir de ces résultats, on peut refaire toutes les analyses et cartes réalisées avec la GWR standard.
+
+Par exemple, les cartes des coefficients des VI par epci Breton
+
+```{r}
+data_immo_bzh$agri.mgwr=MGWR$SDF$part_agri_nb_emploi
+data_immo_bzh$perc_maison.mgwr <- MGWR$SDF$perc_maison
+data_immo_bzh$dens_pop.mgwr=MGWR$SDF$dens_pop
+data_immo_bzh$med_vie.mgwr=MGWR$SDF$med_niveau_vis
+data_immo_bzh$logvac.mgwr=MGWR$SDF$perc_log_vac
+data_immo_bzh$tinylog.mgwr=MGWR$SDF$perc_tiny_log
+data_immo_bzh$suroccup.mgwr=MGWR$SDF$part_log_suroccup
+data_immo_bzh$cadre.mgwr=MGWR$SDF$part_cadre_profintellec_nbemploi
+
+# Réaliser la collection des cartes
+
+par(mfrow = c(2, 4))
+
+mf_map(x = data_immo_bzh, var = "agri.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients Agriculteurs MGWR")
+
+mf_map(x = data_immo_bzh, var = "perc_maison.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de Maison MGWR")
+
+mf_map(x = data_immo_bzh, var = "dens_pop.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de dens pop MGWR")
+
+mf_map(x = data_immo_bzh, var = "med_vie.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de Médianne niveau de vie MGWR")
+
+mf_map(x = data_immo_bzh, var = "logvac.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de Logements vacants MGWR")
+
+mf_map(x = data_immo_bzh, var = "tinylog.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de Petits logements MGWR")
+
+mf_map(x = data_immo_bzh, var = "suroccup.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de logement suroocupés MGWR")
+
+mf_map(x = data_immo_bzh, var = "cadre.mgwr", type = "choro", pal= "Earth")
+mf_title("Coefficients de Cadre MGWR")
+
+```
+
+
+## Régionalisation
+
+Ici l'objectif va être de définir des sous-espaces sur la base des coefficients de la GWR, sous-espaces qui vont se caractériser par l'homogénéité des coefficients des prédicteurs au sein du sous-espace.
+
+Thierry feuillet décrit cette méthode de cette manière : 
+
+> *"Ce processus de découpage de l’espace en sous-régions homogènes se nomme la régionalisation. C’est une extension de la classification classique : on y ajoute un critère de contiguité spatiale. La régionalisation est donc une classification spatiale.*
+> 
+> *Il existe plusieurs méthodes de régionalisation. Un des principes les plus répandus consiste à établir une classification à la fois sur la base de la ressemblance entre les observations, et sur leur proximité dans l’espace géographique.*
+> 
+> *Nous allons ici utiliser l’algorithme SKATER (Spatial Klustering Analysis by Tree Edge Removal), méthode proposée par Assunçao et al. (2006) et déjà appliqué dans un contexte de recherche similaire au notre par Helbich et al. (2013). Par ailleurs, une description très pédagogique de la méthode est disponible ici :* http://www.jms-insee.fr/2018/S08_5_ACTE_ROUSSEZ_JMS2018.pdf
+> 
+> *L’algorithme SKATER comporte 4 étapes (cf. doc cité ci-dessus) :*
+> 
+> *1- Constuction d’un graphe de voisinage (contiguité ou knn)*
+> *2- Pondération des liens du graphe à partir de la matrice de dissimilarité*
+> *3- Construction de l’arbre portant minimal, en retenant le lien avec le voisin le plus ressemblant pour chaque noeud*
+> *4- Elagage de l’arbre maximisant la variance inter-classes des sous-graphes*
+
+
+Avant de poursuivre on va donc recalculer un modèle GWR pour notre exemple breton:
+
+```{r}
+
+library(spgwr)
+
+best.bzh <- gwr.sel(formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi, 
+                    data = data_immo_bzh, 
+                    coords = st_coordinates(st_centroid(data_immo_bzh)))
+
+
+bzh_gwr <- gwr(formula = prix_med ~ perc_log_vac + perc_maison + perc_tiny_log + dens_pop + med_niveau_vis + part_log_suroccup + part_agri_nb_emploi + part_cadre_profintellec_nbemploi, 
+               data = data_immo_bzh, 
+               coord = st_coordinates(st_centroid(data_immo_bzh)),
+               bandwidth = best.bzh, 
+               gweight = gwr.Gauss,
+               hatmatrix = TRUE) 
+```
+
+
+### Première étape : préparation de la table des coefficients GWR
+
+On fait une standardisation (centrage-réduction) pour rendre nos différents coefficients comparables.
+
+```{r}
+bzh.stand <- bzh_gwr$SDF %>% 
+  as.data.frame() %>% 
+  select(3:10) %>% # On ne conserve que les colonne des coeff de nos prédicteurs
+  mutate_all(~scale(.)) %>% 
+  rename_with(~paste(.x, "b", sep = "_"))
+
+data_bzh <- cbind(data_immo_bzh, bzh.stand)
+
+data_bzh_sp <- as(data_bzh, "Spatial")
+
+```
+
+### Computation de l’algorithme SKATER : Définition du voisinage de chaque point
+
+De ce que j'ai compris, Skater est un algorithme pour faire du clustering de données spatiales, en s'assurant que les clusters sont constitués d'objets contigus. Pour en savoir plus sur skater, voir [ce post](https://www.dshkol.com/post/spatially-constrained-clustering-and-regionalization/) [@skater].
+
+```{r}
+knn <- knearneigh(bzh_gwr$SDF, k = 50) # On utilise knearneigh car nous ne sommes plus sur un shape avec des polygons - on avait alors utilisé la fonction poly2nb - mais sur une matrice de points coordonnées
+nb <- knn2nb(knn)
+plot(nb, coords = coordinates(bzh_gwr$SDF), col="blue")
+```
+
+
+Calibrage du coût des arêtes et de la pondération spatiale
+
+```{r}
+costs <- nbcosts(nb, data = bzh.stand)
+costsW <- nb2listw(nb, costs, style="B")
+```
+
+Minimisation de l’arbre et classification
+
+```{r}
+costsTree <- mstree(costsW)
+plot(costsTree, coords = coordinates(bzh_gwr$SDF), col="blue", main = "Arbre portant minimal")
+```
+
+Ici définition en 5 clusters, c'est arbitraire mais orienté par les analyses précédentes.
+
+```{r}
+# Mettre spdep:: devant la fonction car le package rgeoda possède la même fonction qui fait la même chose mais pas les mêmes arguments
+clus5 <- spdep::skater(edges = costsTree[,1:2], data = bzh.stand, ncuts = 5)
+```
+
+```{r}
+bzhClus <- data_immo_bzh %>% 
+mutate(clus = as.factor(clus5$groups)) %>% 
+bind_cols(bzh.stand)
+
+mf_map(x = bzhClus, var = "clus", type = "typo", pal= "Set 2")
+mf_title("régionalisation Bretagne")
+```
+
+Et grâce au code qui suit vous pouvez caractériser les clusters.
+
+```{r}
+library(ggplot2)
+
+nomVar <- c("perc_log_vac_b","perc_maison_b","perc_tiny_log_b","dens_pop_b","med_niveau_vis_b", "part_log_suroccup_b","part_agri_nb_emploi_b","part_cadre_profintellec_nbemploi_b")
+
+clusProfile <- bzhClus[, c(nomVar, "clus")] %>% 
+  group_by(clus) %>% 
+  summarise_each(funs(mean)) %>% 
+  st_drop_geometry()
+
+clusLong <- reshape2::melt(clusProfile, id.vars = "clus")
+
+profilePlot <- ggplot(clusLong) +
+  geom_bar(aes(x = variable, y = value), 
+           fill = "grey25", 
+           position = "identity", 
+           stat = "identity") +
+  scale_x_discrete("Effet") + 
+  scale_y_continuous("Valeur moyenne par classe") +
+  facet_wrap(~ clus) + 
+  coord_flip() + 
+  theme(strip.background = element_rect(fill="grey25"),
+        strip.text = element_text(colour = "grey85", face = "bold"))
+
+profilePlot
+```
+
+# Bibliographie {-}
+
+<div id="refs"></div>
+
+# Annexes {-}
+
+## Info session  {-}
+
+```{r session_info, echo=FALSE}
+kableExtra::kable_styling(knitr::kable(rzine::sessionRzine()[[1]], row.names = F))
+kableExtra::kable_styling(knitr::kable(rzine::sessionRzine()[[2]], row.names = F))
+```
+
+
+
+
